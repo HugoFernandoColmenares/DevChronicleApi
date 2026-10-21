@@ -1,0 +1,50 @@
+@base = http://127.0.0.1:8080/api/v1
+@token = replace-with-author-token
+
+### Health
+GET {{base}}/health
+
+### Published articles
+GET {{base}}/articles
+
+### Filter by tag
+GET {{base}}/articles?tag=angular
+
+### One article
+GET {{base}}/articles/angular-signals-in-practice
+
+### Create
+POST {{base}}/articles
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "notes-from-the-desk",
+  "title": "Notes from the desk",
+  "author": "Hugo Colmenares",
+  "date": "2026-10-21",
+  "tags": ["journal"],
+  "excerpt": "A fifth entry created through the API.",
+  "markdown": "## From the API\n\nThis entry was not copied into index.json.\n",
+  "published": true
+}
+
+### Replace
+PUT {{base}}/articles/notes-from-the-desk
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "slug": "notes-from-the-desk",
+  "title": "Notes from the desk",
+  "author": "Hugo Colmenares",
+  "date": "2026-10-21",
+  "tags": ["journal", "markdown"],
+  "excerpt": "Updated through the API.",
+  "markdown": "## From the API\n\nThe author token can replace the body.\n",
+  "published": true
+}
+
+### Delete
+DELETE {{base}}/articles/notes-from-the-desk
+Authorization: Bearer {{token}}
