@@ -1,15 +1,11 @@
-# DevChronicle API
+# DevChronicleApi
 
-Motor HTTP del journal. Sirve el catálogo y el Markdown desde SQLite, y deja la compilación del HTML en el cliente Angular. La cáscara de escritorio no entra en este corte: el diseño está en `docs/files/hybrid-web-desktop.md` y el plan de este servicio está en `docs/files/mvp-rust-sqlite-docker.md`, en la raíz del repositorio.
+DevChronicleApi is the backend of DevChronicle, a markdown journal. It is a Rust workspace that serves the catalog and raw Markdown from SQLite. The Angular client compiles that Markdown into HTML. The workspace currently contains one crate, `crates/api`, exposed as a library and two binaries.
 
-## Qué quedó armado
+- `devchronicle-api` reads the environment and calls `serve`.
+- `seed` loads a content directory once.
 
-El workspace tiene un solo crate, `crates/api`. Es biblioteca y dos binarios:
-
-- `devchronicle-api` lee el entorno y llama a `serve`.
-- `seed` carga `frontend/public/content` una vez.
-
-`build_app` y `serve` viven en la biblioteca para que, más adelante, Tauri pueda arrancar el mismo router sin copiar SQL ni rutas. Docker empaqueta solo estos dos binarios.
+`build_app` and `serve` live in the library so a later Tauri shell can start the same router. The Docker image packages these two binaries only. The desktop shell is described in `docs/files/hybrid-web-desktop.md`. The client is [DevChronicleApp](https://github.com/HugoFernandoColmenares/DevChronicleApp). The Compose stack is [DevChronicle](https://github.com/HugoFernandoColmenares/DevChronicle).
 
 ```text
 backend/
@@ -19,87 +15,87 @@ backend/
 ├── crates/api/
 │   ├── migrations/0001_articles.sql
 │   ├── requests.http
-│   ├── src/          config, modelos, SQL, rutas, semilla, binarios
+│   ├── src/          configuration, models, SQL, routes, seed, binaries
 │   └── tests/articles.rs
 └── docs/
 ```
 
-Al arrancar, el proceso abre el archivo SQLite (lo crea si no existe), aplica `PRAGMA foreign_keys = ON` y `journal_mode = WAL`, corre las migraciones embebidas y escucha HTTP. El pool tiene como máximo 5 conexiones.
+On startup the process opens the SQLite file and creates it when missing. It sets `PRAGMA foreign_keys = ON` and `journal_mode = WAL`, runs the migrations embedded in the binary, and listens for HTTP. The pool allows at most five connections.
 
-## Decisiones de este corte
+## Behavior
 
-- El contrato público es JSON de metadatos más Markdown crudo. El slug sigue el patrón del cliente: `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
-- Un slug inválido en `POST` o `PUT` responde `400`. En `GET`, un slug inválido o no publicado responde `404` con `{ "error": "article_not_found" }`, igual que una entrada que no existe.
-- La escritura exige `Authorization: Bearer <AUTHOR_TOKEN>`. El token no tiene valor por defecto: si falta o está vacío, el proceso termina.
-- La semilla usa `ON CONFLICT(slug) DO NOTHING`. El plan menciona `DO UPDATE`, pero también pide que un segundo pase no pise ediciones del autor. Se cumple la segunda regla: lo que ya está en la base se deja como está.
-- Las migraciones viajan dentro del binario (`sqlx::migrate!`). La imagen de Docker no necesita el directorio `migrations` en tiempo de ejecución.
-- CORS está abierto para que `ng serve` pueda llamar al API en local. Detrás de nginx, el navegador no cruza orígenes.
-- `DATABASE_URL` acepta la forma del plan (`sqlite:///data/devchronicle.db?mode=rwc` o `sqlite://./data/devchronicle.db?mode=rwc`). El proceso ignora `mode` y abre el archivo en lectura y escritura, creándolo si hace falta.
+- The public contract is JSON metadata plus raw Markdown. Slugs match `^[a-z0-9]+(?:-[a-z0-9]+)*$`.
+- An invalid slug on `POST` or `PUT` returns `400`. On `GET`, an invalid or unpublished slug returns `404` with `{ "error": "article_not_found" }`.
+- Writes require `Authorization: Bearer <AUTHOR_TOKEN>`. The process exits when that variable is missing or empty.
+- The seed uses `ON CONFLICT(slug) DO NOTHING`, so a second run does not overwrite author edits.
+- Migrations ship inside the binary through `sqlx::migrate!`. The Docker image does not need a `migrations` directory at runtime.
+- CORS is permissive so `ng serve` can call the API directly. Behind nginx, the browser uses one origin.
+- `DATABASE_URL` accepts `sqlite:///data/devchronicle.db?mode=rwc` and `sqlite://./data/devchronicle.db?mode=rwc`. The process opens the file for reading and writing and creates it when needed.
 
-## Requisitos
+## Requirements
 
-- Rust stable, con Cargo.
-- En Windows, el host por defecto `x86_64-pc-windows-msvc` necesita las Build Tools de Visual C++ (`link.exe`) y el Windows SDK. Sin ese enlazador, Cargo no produce un binario. La imagen Docker no depende de eso: `rust:1-bookworm` trae el compilador de C que SQLx usa para SQLite.
-- SQLx compila SQLite dentro del crate. No hace falta un servidor de base de datos.
+- Stable Rust and Cargo.
+- On Windows, the default `x86_64-pc-windows-msvc` host needs the Visual C++ Build Tools (`link.exe`) and the Windows SDK. The Docker image does not: `rust:1-bookworm` provides the C toolchain SQLx uses to compile SQLite.
+- SQLite is compiled into the crate. A separate database server is not required.
 
-## Configuración
+## Configuration
 
-Copia la plantilla y completa el token. El archivo `.env` está ignorado por git; esta carpeta no lo carga sola: las variables tienen que estar en el entorno del proceso (PowerShell, el shell o Docker).
+Copy the template and set the token. `.env` is ignored by git. This crate does not load that file by itself. The variables must be present in the process environment, whether that is PowerShell, a shell, or Docker.
 
 ```powershell
 copy .env.example .env
 ```
 
-| Variable | Obligatorio | Uso |
+| Variable | Required | Purpose |
 | :--- | :--- | :--- |
-| `AUTHOR_TOKEN` | Sí, para el API | Secreto del autor. La semilla no lo usa. |
-| `DATABASE_URL` | Sí | Archivo SQLite. |
-| `BIND` | No | Por defecto `0.0.0.0:8080`. En local conviene `127.0.0.1:8080`. |
-| `CONTENT_DIR` | No | Carpeta con `index.json` y los `.md`. Si falta, `seed` busca `frontend/public/content`. |
+| `AUTHOR_TOKEN` | Yes, for the API | Author secret. The seed binary does not read it. |
+| `DATABASE_URL` | Yes | SQLite file. |
+| `BIND` | No | Defaults to `0.0.0.0:8080`. Local runs should use `127.0.0.1:8080`. |
+| `CONTENT_DIR` | No | Directory containing `index.json` and the `.md` files. When unset, `seed` looks for `frontend/public/content`. |
 
-Ejemplo en PowerShell, desde `backend/`:
+Example from `backend/` in PowerShell:
 
 ```powershell
-$env:AUTHOR_TOKEN = "un-token-largo-y-secreto"
+$env:AUTHOR_TOKEN = "replace-with-a-private-token"
 $env:DATABASE_URL = "sqlite://./data/devchronicle.db?mode=rwc"
 $env:BIND = "127.0.0.1:8080"
 $env:CONTENT_DIR = "..\frontend\public\content"
 ```
 
-## Arranque
+## Run
 
-Desde `backend/`:
+From `backend/`:
 
 ```powershell
 cargo run --bin seed
 cargo run --bin devchronicle-api
 ```
 
-La semilla se ejecuta a mano, no en cada arranque. La primera vez inserta las cuatro entradas del frontend. La segunda informa `inserted 0` y no cambia títulos ni Markdown ya editados.
+Run the seed by hand. It does not run on every startup. The first run inserts the sample entries. A later run reports `inserted 0` and leaves existing titles and Markdown unchanged.
 
-Salud del proceso:
+Health check:
 
 ```text
 GET http://127.0.0.1:8080/api/v1/health
 { "status": "ok" }
 ```
 
-`crates/api/requests.http` tiene el resto de llamadas para un cliente REST.
+`crates/api/requests.http` lists the remaining calls for a REST client.
 
-## Contrato
+## Contract
 
-Base: `/api/v1`.
+Base path: `/api/v1`.
 
-| Método | Ruta | Auth | Resultado |
+| Method | Path | Auth | Result |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/health` | No | `{ "status": "ok" }` |
-| `GET` | `/articles` | No | Publicadas, de la más reciente a la más antigua. `?tag=` filtra. |
-| `GET` | `/articles/{slug}` | No | `{ metadata, markdown }` sin frontmatter. |
-| `POST` | `/articles` | Bearer | `201` y el recurso. `409` si el slug ya existe. |
-| `PUT` | `/articles/{slug}` | Bearer | Sustituye título, autor, fecha, etiquetas, extracto, Markdown y `published`. |
-| `DELETE` | `/articles/{slug}` | Bearer | `204`. La clave foránea en cascada borra las etiquetas. |
+| `GET` | `/articles` | No | Published entries, newest first. `?tag=` filters the list. |
+| `GET` | `/articles/{slug}` | No | `{ metadata, markdown }` with no frontmatter. |
+| `POST` | `/articles` | Bearer | `201` and the resource. `409` when the slug already exists. |
+| `PUT` | `/articles/{slug}` | Bearer | Replaces title, author, date, tags, excerpt, Markdown, and `published`. |
+| `DELETE` | `/articles/{slug}` | Bearer | `204`. Tag rows are removed by the foreign-key cascade. |
 
-El cuerpo de alta y edición:
+Create and update body:
 
 ```json
 {
@@ -114,55 +110,68 @@ El cuerpo de alta y edición:
 }
 ```
 
-`published: false` guarda un borrador. No sale en el listado ni en la lectura pública. `date` es la fecha editorial `YYYY-MM-DD`. Las etiquetas usan el mismo patrón que el slug y se devuelven ordenadas.
+`published: false` stores a draft. Drafts are omitted from the public list and from public reads. `date` is the editorial date in `YYYY-MM-DD` form. Tags use the same pattern as slugs and are returned in order.
 
-Errores habituales: `invalid_slug`, `invalid_article`, `unauthorized`, `article_not_found`, `slug_exists`, `internal_error`. Un JSON mal formado también responde `400` con `invalid_article`.
+Common error codes are `invalid_slug`, `invalid_article`, `unauthorized`, `article_not_found`, `slug_exists`, and `internal_error`. Malformed JSON also returns `400` with `invalid_article`.
 
-## Pruebas
+## Tests
 
 ```powershell
 cargo test
 ```
 
-La suite HTTP cubre borradores ocultos, slug inválido, `401`, `409`, borrado con cascada de etiquetas, edición y semilla idempotente, incluida la del contenido real del frontend.
+The HTTP suite covers hidden drafts, an invalid slug, `401`, `409`, tag removal on delete, updates, and an idempotent seed, including the real frontend content.
 
-Para probar el proceso en marcha, con las variables de arriba:
-
-```powershell
-cargo run --bin seed
-cargo run --bin devchronicle-api
-```
-
-En otra terminal:
+With the variables above, exercise a running process from another terminal:
 
 ```powershell
 curl.exe -s http://127.0.0.1:8080/api/v1/health
 curl.exe -s http://127.0.0.1:8080/api/v1/articles
 curl.exe -s http://127.0.0.1:8080/api/v1/articles/angular-signals-in-practice
-curl.exe -s -X POST http://127.0.0.1:8080/api/v1/articles -H "Authorization: Bearer un-token-largo-y-secreto" -H "Content-Type: application/json" --data-binary "@cuerpo.json"
+curl.exe -s -X POST http://127.0.0.1:8080/api/v1/articles -H "Authorization: Bearer replace-with-a-private-token" -H "Content-Type: application/json" --data-binary "@body.json"
 ```
 
-Un `POST` sin token tiene que responder `401`. Repetir el mismo slug, `409`. `DELETE` del slug nuevo, `204`, y el listado deja de mostrarlo.
+A `POST` without a token returns `401`. Repeating a slug returns `409`. `DELETE` of a new slug returns `204`, and the list no longer includes it.
 
-Las capturas de esa comprobación están en `docs/screenshots/`: `api-health.png` es `GET /api/v1/health` y `api-articles.png` es el listado de las cuatro entradas sembradas. El navegador las muestra formateadas; el API responde JSON compacto.
+The checks below are in `docs/screenshots/`. `api-health.png` is `GET /api/v1/health`. `api-articles.png` is the list of the four seeded entries. A browser may pretty-print the JSON. The API itself returns compact JSON.
+
+![Health response](docs/screenshots/api-health.png)
+
+![Seeded article list](docs/screenshots/api-articles.png)
 
 ## Docker
 
-El contexto de build es esta carpeta. La imagen deja `devchronicle-api` y `seed` en `/usr/local/bin`, corre con el usuario `chronicle` y espera el volumen en `/data`.
+The build context is this directory. The image installs `devchronicle-api` and `seed` in `/usr/local/bin`, drops to the `chronicle` user, and expects the database volume at `/data`.
 
 ```powershell
 docker build -t devchronicle-api .
-docker run --rm -p 8080:8080 -e AUTHOR_TOKEN=un-token-largo-y-secreto -e DATABASE_URL=sqlite:///data/devchronicle.db?mode=rwc -e BIND=0.0.0.0:8080 -v chronicle-data:/data devchronicle-api
+docker run --rm -p 8080:8080 -e AUTHOR_TOKEN=replace-with-a-private-token -e DATABASE_URL=sqlite:///data/devchronicle.db?mode=rwc -e BIND=0.0.0.0:8080 -v chronicle-data:/data devchronicle-api
 ```
 
-La semilla dentro del contenedor no ve `frontend/`, porque el contexto de la imagen es solo `backend/`. Hay que montar el contenido:
+The image build context is only this directory, so the seed process cannot see `frontend/` unless that directory is mounted:
 
 ```powershell
 docker run --rm -e DATABASE_URL=sqlite:///data/devchronicle.db?mode=rwc -e CONTENT_DIR=/seed/content -v chronicle-data:/data -v ${PWD}/../frontend/public/content:/seed/content:ro --entrypoint /usr/local/bin/seed devchronicle-api
 ```
 
-Eso corresponde al `docker compose run --rm api /usr/local/bin/seed` del plan, con el montaje que el contexto `./backend` no puede evitar. El `compose.yaml` de la raíz, nginx y el cliente Angular siguen siendo el paso de orquestación y no forman parte de este crate.
+Compose in the orchestration repository performs the same mount. Nginx and the Angular client belong to that stack, not to this crate.
 
-## Fuera de este corte
+## Later work
 
-Pantalla de edición, cuentas, borradores con flujo editorial, búsqueda, RSS, imágenes y la ventana Tauri. Cuando llegue el escritorio, `backend/app/` dependerá de esta biblioteca y llamará a `serve` en `127.0.0.1`.
+An editing screen, accounts, an editorial draft workflow, search, RSS, image uploads, and the Tauri window are outside this cut. When the desktop shell arrives, `backend/app/` will depend on this library and call `serve` on `127.0.0.1`.
+
+## Author
+
+Hugo Fernando Colmenares. Public repositories: [HugoFernandoColmenares](https://github.com/HugoFernandoColmenares?tab=repositories).
+
+This repository is [DevChronicleApi](https://github.com/HugoFernandoColmenares/DevChronicleApi).
+
+| Project | Role |
+| :--- | :--- |
+| [DevChronicleApi](https://github.com/HugoFernandoColmenares/DevChronicleApi) | Rust API and SQLite |
+| [DevChronicleApp](https://github.com/HugoFernandoColmenares/DevChronicleApp) | Angular frontend |
+| [DevChronicle](https://github.com/HugoFernandoColmenares/DevChronicle) | Docker Compose orchestration |
+
+## License
+
+Private project. All rights reserved unless the repository owner states otherwise.
